@@ -357,7 +357,6 @@ int interactive(int socketfd, char *device)
             memset(pRecvBuf, 0, sizeof(pRecvBuf));
 
             // If unit off is set or no unit is defined, we pass the parameters in hex
-            memset(sendBuf, 0, sizeof(sendBuf));
             if ((noUnit || !cPtr->unit) && *para) {
                 if ((sendLen = string2chr(para, sendBuf, sizeof(sendBuf))) == -1) {
                     logIT(LOG_ERR, "No hex string: %s", para);
@@ -506,6 +505,36 @@ int interactive(int socketfd, char *device)
                     snprintf(string, sizeof(string), "\tPre command (P0-P9): %s\n", cPtr->precmd);
                     Writen(socketfd, string, strlen(string));
                 }
+                if (cPtr->cmpPtr) {
+                    snprintf(string, sizeof(string), "\tCmpPtr: token: %d; len: %d; data: ", cPtr->cmpPtr->token, cPtr->cmpPtr->len);
+                    Writen(socketfd, string, strlen(string));
+                    memset(string, 0, sizeof(string));
+                    char2hex(string, cPtr->cmpPtr->send, cPtr->cmpPtr->len);
+                    Writen(socketfd, string, strlen(string));
+                }
+                if (cPtr->cmpPtr->next) {
+                    snprintf(string, sizeof(string), "\tCmpPtr Next: token: %d; len: %d; data: ", cPtr->cmpPtr->next->token, cPtr->cmpPtr->next->len);
+                    Writen(socketfd, string, strlen(string));
+                    memset(string, 0, sizeof(string));
+                    char2hex(string, cPtr->cmpPtr->next->send, cPtr->cmpPtr->next->len);
+                    Writen(socketfd, string, strlen(string));
+                
+                    if (cPtr->cmpPtr->next->next) {
+                        snprintf(string, sizeof(string), "\tCmpPtr Next2: token: %d; len: %d; data: ", cPtr->cmpPtr->next->next->token, cPtr->cmpPtr->next->next->len);
+                        Writen(socketfd, string, strlen(string));
+                        memset(string, 0, sizeof(string));
+                        char2hex(string, cPtr->cmpPtr->next->next->send, cPtr->cmpPtr->next->next->len);
+                        Writen(socketfd, string, strlen(string));
+                    
+                        if (cPtr->cmpPtr->next->next->next) {
+                            snprintf(string, sizeof(string), "\tCmpPtr Next3: token: %d; len: %d; data: ", cPtr->cmpPtr->next->next->next->token, cPtr->cmpPtr->next->next->next->len);
+                            Writen(socketfd, string, strlen(string));
+                            memset(string, 0, sizeof(string));
+                            char2hex(string, cPtr->cmpPtr->next->next->next->send, cPtr->cmpPtr->next->next->next->len);
+                            Writen(socketfd, string, strlen(string));
+                        }
+                    }
+                }
 
                 // If a unit has been given, we also output it
                 compilePtr cmpPtr;
@@ -562,6 +591,195 @@ int interactive(int socketfd, char *device)
                 snprintf(string, sizeof(string), "ERR: command %s unknown\n", readPtr);
                 Writen(socketfd, string, strlen(string));
             }
+        } else if (strstr(readBuf, "custom") == readBuf) {
+            readPtr = readBuf + strlen("custom");
+            while (isspace(*readPtr)) {
+                readPtr++;
+            }
+            
+            char *type = NULL, *addr = NULL, *sLen = NULL, *unit = NULL, *value = NULL;
+            int len = 0;
+            const char delimiter[] = ";";
+            char *token = strtok(readPtr, delimiter);
+            
+            // Zählen der Tokens und Zuweisung
+            if (token != NULL) {
+                type = token;
+                token = strtok(NULL, delimiter);
+            }
+            if (token != NULL) {
+                addr = token;
+                token = strtok(NULL, delimiter);
+            }
+            if (token != NULL) {
+                sLen = token;
+                len = atoi(token);
+                token = strtok(NULL, delimiter);
+            }
+            if (token != NULL) {
+                unit = token;
+                token = strtok(NULL, delimiter);
+            }
+            if (token != NULL) {
+                value = token;
+                token = strtok(NULL, delimiter);
+            }
+            
+            int cmdType = 0;
+            // Überprüfen der Werte
+            if (strstr(type, "read") == type && strlen(addr) == 4 && len > 0 && unit && !value) {
+                cmdType = 1;
+                snprintf(string, sizeof(string), "Custom read command: Addr: %s Len: %u Unit: %s\n", addr, len, unit);
+                logIT(LOG_INFO, string);
+            } else if (strstr(type, "write") == type && strlen(addr) == 4 && len > 0 && value && !token) {
+                cmdType = 2;
+                snprintf(string, sizeof(string), "Custom write command: Addr: %s Len: %u Unit: %s Value: %s\n", addr, len, unit, value);
+                logIT(LOG_INFO, string);
+            }
+            else{
+                logIT(LOG_INFO, string);
+                snprintf(string, sizeof(string), "ERR: Custom command invalid: %s\n", readPtr);
+                Writen(socketfd, string, strlen(string));
+            }
+            
+            if(cmdType > 0) {
+                commandPtr nptr;
+                compilePtr nCmpPtr;
+                nptr = calloc(1, sizeof(Command));
+                nCmpPtr = calloc(1, sizeof(Compile));
+                nptr->next = NULL;
+                nptr->cmpPtr = NULL;
+                nptr->bit = -1;
+                nptr->len = len;
+                
+                nptr->addr = calloc(strlen(addr) + 1, sizeof(char));
+                strcpy(nptr->addr, addr);
+                
+                char respUnit[] = "SR";
+                char cmdAddr[6];
+                sprintf(cmdAddr, "%c%c %c%c", addr[0], addr[1], addr[2], addr[3]);
+                
+                if(strcmp(unit, "raw") == 0 || *unit == ' '){
+                     unit[0] = '\0';
+                     nptr->unit = NULL;
+                     nCmpPtr->uPtr = getUnitNode(uPtr, respUnit);
+                } else {
+                    nptr->unit = unit;
+                    nCmpPtr->uPtr = getUnitNode(uPtr, unit);
+                }
+                
+                memset(string, 0, sizeof(string));
+                if(cmdType == 1) {
+                    snprintf(string, sizeof(string), "SEND 00 0%u %s %02u;RECV %u %s", cmdType, cmdAddr, len, len, unit);
+                    memset(para, 0, sizeof(para));
+                }
+                else {
+                    snprintf(string, sizeof(string), "SEND 00 0%u %s %02u;SEND BYTES %s;RECV 1 SR", cmdType, cmdAddr, len, unit);
+                    strcpy(para, value);
+                }
+                nptr->send = calloc(strlen(string) + 1, sizeof(char));
+                strcpy(nptr->send, string);
+                
+                logIT(LOG_INFO, string);
+                
+                nCmpPtr = buildByteCode(nptr, nCmpPtr->uPtr);
+                
+                memset(string, 0, sizeof(string));
+                memset(recvBuf, 0, sizeof(recvBuf));
+                memset(sendBuf, 0, sizeof(sendBuf));
+                memset(pRecvBuf, 0, sizeof(pRecvBuf));
+
+                // If unit off is set or no unit is defined, we pass the parameters in hex
+                if ((noUnit || !nptr->unit) && *para) {;
+                    if ((sendLen = string2chr(para, sendBuf, sizeof(sendBuf))) == -1) {
+                        logIT(LOG_ERR, "No hex string: %s", para);
+                        sendErrMsg(socketfd);
+                        if (! Writen(socketfd, PROMPT, strlen(PROMPT))) {
+                            sendErrMsg(socketfd);
+                            framer_closeDevice(fd);
+                            vcontrol_semrelease();
+                            return 0;
+                        }
+                        continue;
+                    }
+                    // If sendLen > len of the command, we use len
+                    if (sendLen > nptr->len) {
+                        logIT(LOG_WARNING,
+                              "Length of the hex string > send length of the command, sending only %d bytes", nptr->len);
+                        sendLen = nptr->len;
+                    }
+                } else if (*para) {
+                    // We copy the parameter, execByteCode itself takes care of it
+                    strcpy(sendBuf, para);
+                    sendLen = strlen(sendBuf);
+                }
+
+                // We only open the device if we have something to do. But only if it's not open yet.
+                if (fd < 0) {
+                    /* As one vclient call opens the link once, all is seen a transaction
+                     * This may cause trouble for telnet sessions, as the whole session is
+                     * one link activity, even more commands are given within.
+                     * This is related to a accept/close on a server socket
+                     */
+                    // everything on link is a transaction - all commands
+                    vcontrol_semget();
+
+                    if ((fd = framer_openDevice(device, cfgPtr->devPtr->protoPtr->id)) == -1) {
+                        logIT(LOG_ERR, "Error opening %s", device);
+                        sendErrMsg(socketfd);
+                        framer_closeDevice(fd);
+                        vcontrol_semrelease();
+                        if (!Writen(socketfd, PROMPT, strlen(PROMPT))) {
+                            sendErrMsg(socketfd);
+                            return 0;
+                        }
+                        continue;
+                    }
+                }
+
+                // We execute the bytecode:
+                // -1: Error
+                //  0: Preformatted string
+                //  n: raw bytes
+                count = execByteCode(nCmpPtr, fd, recvBuf, sizeof(recvBuf), sendBuf, sendLen, noUnit, -1, 3, pRecvBuf, 4000);
+
+                if (count == -1) {
+                    logIT(LOG_ERR, "Error executing %s", readBuf);
+                    sendErrMsg(socketfd);
+                } else if (*recvBuf && (count == 0)) {
+                    // Unit converted
+                    logIT1(LOG_INFO, recvBuf);
+                    snprintf(string, sizeof(string), "%s\n", recvBuf);
+                    Writen(socketfd, string, strlen(string));
+                } else {
+                    int n;
+                    char *ptr;
+                    ptr = recvBuf;
+                    char buffer[MAXBUF];
+                    memset(buffer, 0, sizeof(buffer));
+                    for (n = 0; n < count; n++) {
+                        // We received a character
+                        memset(string, 0, sizeof(string));
+                        unsigned char byte = *ptr++ & 255;
+                        snprintf(string, sizeof(string), "%02X ", byte);
+                        strcat(buffer, string);
+                        if (n >= MAXBUF - 3) {
+                            break;
+                        }
+                    }
+                    if (count) {
+                        snprintf(string, sizeof(string), "%s\n", buffer);
+                        Writen(socketfd, string, strlen(string));
+                        logIT(LOG_INFO, "Received: %s", buffer);
+                    }
+                }
+                
+                free(nptr->addr);
+                free(nptr->send);
+                free(nCmpPtr);
+                free(nptr);
+            }
+
         } else if (*readBuf) {
             if (!Writen(socketfd, UNKNOWN, strlen(UNKNOWN))) {
                 sendErrMsg(socketfd);
