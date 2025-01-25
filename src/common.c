@@ -173,18 +173,28 @@ int char2hex(char *outString, const char *charPtr, int len)
 
 short string2chr(char *line, char *buf, short bufsize)
 {
-    char *sptr;
-    short count;
+    char *sptr = line;
+    char hex[3];
+    short count = 0;
 
-    count = 0;
-
-    sptr = strtok(line, " ");
-    do {
+    while (*sptr != '\0' && count < bufsize) {
+        // Skip whitespace
         if (*sptr == ' ') {
+            sptr++;
             continue;
         }
-        buf[count++] = hex2chr(sptr);
-    } while ((sptr = strtok(NULL, " ")) && (count < bufsize));
+
+        // Ensure there are enough characters left for a hex pair
+        if (sptr[0] != '\0' && sptr[1] != '\0') {
+            strncpy(hex, sptr, 2);
+            hex[2] = '\0';
+            buf[count++] = hex2chr(hex);
+            sptr += 2;  // Move to the next hex pair
+        } else {
+            // Not enough characters left to form a hex pair, break out
+            break;
+        }
+    }
 
     return count;
 }
