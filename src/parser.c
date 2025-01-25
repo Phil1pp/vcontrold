@@ -132,9 +132,11 @@ int execByteCode(compilePtr cmpPtr, int fd, char *recvBuf, short recvLen,
     unsigned long etime;
     char out_buff[1024];
     int out_len;
-
-    memset(simIn, 0, sizeof(simIn));
-    memset(simOut, 0, sizeof(simOut));
+    
+    if (iniFD) {
+        memset(simIn, 0, sizeof(simIn));
+        memset(simOut, 0, sizeof(simOut));
+    }
 
     // First copy or convert the bytes of sendBuf to the BYTES token of cmpPtr
     // to be sure not to abort right in the middle of it
@@ -144,13 +146,14 @@ int execByteCode(compilePtr cmpPtr, int fd, char *recvBuf, short recvLen,
             cPtr = cPtr->next;
             continue;
         }
-        if (supressUnit) {
+        if (supressUnit || !cPtr->uPtr) {
             // No unit conversion needed, just copy the bytes
             if (sendLen != cPtr->len) {
                 // This should never happen!
                 logIT(LOG_ERR,
                       "Error in length of the hex string (%d) != send length of the command (%d), terminating", sendLen, cPtr->len);
-                return -1;
+                //return -1;
+                cPtr->len = sendLen;
             }
             if (cPtr->send) {
                 free(cPtr->send);
@@ -184,10 +187,12 @@ int execByteCode(compilePtr cmpPtr, int fd, char *recvBuf, short recvLen,
                     logIT1(LOG_ERR, "Error in wait, terminating");
                     return -1;
                 }
-                memset(string, 0, sizeof(string));
-                char2hex(string, cmpPtr->send, cmpPtr->len);
-                strcat(simIn, string);
-                strcat(simIn, " ");
+                if (iniFD) {
+                    memset(string, 0, sizeof(string));
+                    char2hex(string, cmpPtr->send, cmpPtr->len);
+                    strcat(simIn, string);
+                    strcat(simIn, " ");
+                }
                 break;
             case SEND:
                 out_len = 0;
@@ -214,17 +219,16 @@ int execByteCode(compilePtr cmpPtr, int fd, char *recvBuf, short recvLen,
                     return -1;
                 }
 
-                if (iniFD && *simIn && *simOut) {
+                if (iniFD) {
                     // We already sent and received something, so we output it
                     fprintf(iniFD, "%s= %s\n", simOut, simIn);
                     memset(simOut, 0, sizeof(simOut));
                     memset(simIn, 0, sizeof(simIn));
+                    memset(string, 0, sizeof(string));
+                    char2hex(string, out_buff, out_len);
+                    strcat(simOut, string);
+                    strcat(simOut, " ");
                 }
-
-                memset(string, 0, sizeof(string));
-                char2hex(string, out_buff, out_len);
-                strcat(simOut, string);
-                strcat(simOut, " ");
                 break;
             case RECV:
                 if (cmpPtr->len > recvLen) {
@@ -262,11 +266,12 @@ int execByteCode(compilePtr cmpPtr, int fd, char *recvBuf, short recvLen,
                         goto RETRY;
                     }
                 }
-
-                memset(string, 0, sizeof(string));
-                char2hex(string, recvBuf, cmpPtr->len);
-                strcat(simIn, string);
-                strcat(simIn, " ");
+                if (iniFD) {
+                    memset(string, 0, sizeof(string));
+                    char2hex(string, recvBuf, cmpPtr->len);
+                    strcat(simIn, string);
+                    strcat(simIn, " ");
+                }
 
                 // If we have a Unit (== uPtr), we convert the received value and also
                 // return the converted value to uPtr
@@ -279,7 +284,7 @@ int execByteCode(compilePtr cmpPtr, int fd, char *recvBuf, short recvLen,
                     }
                     strncpy(recvBuf, result, recvLen);
 
-                    if (iniFD && *simIn && *simOut) {
+                    if (iniFD) {
                         // We already sent and received, now we output it.
                         fprintf(iniFD, "%s= %s \n", simOut, simIn);
                     }
@@ -287,7 +292,7 @@ int execByteCode(compilePtr cmpPtr, int fd, char *recvBuf, short recvLen,
                     return 0; // 0 == converted to unit
                 }
 
-                if (iniFD && *simIn && *simOut) {
+                if (iniFD) {
                     // We already sent and received, now we output it.
                     fprintf(iniFD, "%s= %s \n", simOut, simIn);
                 }
@@ -307,9 +312,11 @@ int execByteCode(compilePtr cmpPtr, int fd, char *recvBuf, short recvLen,
                         logIT1(LOG_ERR, "Error in send, terminating");
                         return -1;
                     }
-                    char2hex(string, sendBuf, sendLen);
-                    strcat(simOut, string);
-                    strcat(simOut, " ");
+                    if (iniFD) {
+                        char2hex(string, sendBuf, sendLen);
+                        strcat(simOut, string);
+                        strcat(simOut, " ");
+                    }
                 } else if (cmpPtr->len) {
                     // A unit to use is already defined, and we already converted it
                     if (! my_send(fd, cmpPtr->send, cmpPtr->len)) {
@@ -319,10 +326,12 @@ int execByteCode(compilePtr cmpPtr, int fd, char *recvBuf, short recvLen,
                         cmpPtr->len = 0;
                         return -1;
                     }
-                    memset(string, 0, sizeof(string));
-                    char2hex(string, cmpPtr->send, cmpPtr->len);
-                    strcat(simOut, string);
-                    strcat(simOut, " ");
+                    if (iniFD) {
+                        memset(string, 0, sizeof(string));
+                        char2hex(string, cmpPtr->send, cmpPtr->len);
+                        strcat(simOut, string);
+                        strcat(simOut, " ");
+                    }
                 }
                 break;
             default:
