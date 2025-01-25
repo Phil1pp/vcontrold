@@ -59,7 +59,7 @@
 
 #endif
 
-int getCycleTime(char *recv, int len, char *result);
+int getCycleTime(char *recv, int len, char *result, int type);
 int setCycleTime(char *string, char *sendBuf);
 short bytes2Enum(enumPtr ptr, char *bytes, char **text, short len);
 short text2Enum(enumPtr ptr, char *text, char **bytes, short *len);
@@ -67,34 +67,57 @@ int getErrState(enumPtr ePtr, char *recv, int len, char *result);
 int getSysTime(char *recv, int len, char *result);
 int setSysTime(char *input, char *sendBuf);
 
-int getCycleTime(char *recv, int len, char *result)
+int getCycleTime(char *recv, int len, char *result, int type)
 {
     int i;
     char string[80];
 
-    if (len % 2) {
-        sprintf(result, "Byte count not even");
+    if (len == 3 && type > 0) {
+        //new format
+        char mode[10];
+        switch(recv[2]) {
+        case 1:
+            if (type==2) {
+                strcpy(mode, "Oben");
+            } else {
+                strcpy(mode, "Reduziert");
+            }
+            break;
+        case 2:
+            strcpy(mode, "Normal");
+            break;
+        case 3:
+            strcpy(mode, "Sollwert2");
+            break;
+        default:
+            strcpy(mode, "Aus");
+            break;
+        }
+        snprintf(string, sizeof(string), "%02u:%02u - %02u:%02u %s\n", (unsigned char)recv[0]/8, (unsigned char)recv[0]%8*10, (unsigned char)recv[1]/8, (unsigned char)recv[1]%8*10, mode);
+    }
+    else if (len % 2 == 0) {
+        //old format
+        memset(string, 0, sizeof(string));
+
+        for (i = 0; i < len; i += 2) {
+            // TODO - vitoopen: Leave output in German.
+            // CHANGING THIS WOULD BREAK existing applications.
+            // => maybe we could enable english results later with a build option,
+            // but not for the default.
+            if (recv[i] == (char)0xff) {
+                snprintf(string, sizeof(string), "%d:An:--     Aus:--\n", (i / 2) + 1);
+            } else {
+                snprintf(string, sizeof(string), "%d:An:%02u:%02u  Aus:%02u:%02u\n", (i / 2) + 1,
+                         (recv[i] & 0xF8) >> 3, (recv[i] & 7) * 10,
+                         (recv[i + 1] & 0xF8) >> 3, (recv[i + 1] & 7) * 10);
+            }
+        }
+    } else {
+        sprintf(result, "Format unknown");
         return 0;
     }
-
-    memset(string, 0, sizeof(string));
-
-    for (i = 0; i < len; i += 2) {
-        // TODO - vitoopen: Leave output in German.
-        // CHANGING THIS WOULD BREAK existing applications.
-        // => maybe we could enable english results later with a build option,
-        // but not for the default.
-        if (recv[i] == (char)0xff) {
-            snprintf(string, sizeof(string), "%d:An:--     Aus:--\n", (i / 2) + 1);
-        } else {
-            snprintf(string, sizeof(string), "%d:An:%02d:%02d  Aus:%02d:%02d\n", (i / 2) + 1,
-                     (recv[i] & 0xF8) >> 3, (recv[i] & 7) * 10,
-                     (recv[i + 1] & 0xF8) >> 3, (recv[i + 1] & 7) * 10);
-        }
-        strcat(result, string);
-    }
+    strcat(result, string);
     result[strlen(result) - 1] = '\0'; // remove \n
-
     return 1;
 }
 
@@ -354,7 +377,21 @@ int procGetUnit(unitPtr uPtr, char *recvBuf, int recvLen, char *result, char bit
     // We tread the different <type> entries
     if (strstr(uPtr->type, "cycletime") == uPtr->type) {
         // Cycle time
-        if (getCycleTime(recvBuf, recvLen, result)) {
+        if (getCycleTime(recvBuf, recvLen, result, 0)) {
+            return 1;
+        } else {
+            return -1;
+        }
+    } else if (strstr(uPtr->type, "heatingtime") == uPtr->type) {
+        // Cycle time
+        if (getCycleTime(recvBuf, recvLen, result, 1)) {
+            return 1;
+        } else {
+            return -1;
+        }
+    } else if (strstr(uPtr->type, "watertime") == uPtr->type) {
+        // Cycle time
+        if (getCycleTime(recvBuf, recvLen, result, 2)) {
             return 1;
         } else {
             return -1;
