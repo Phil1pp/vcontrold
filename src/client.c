@@ -259,6 +259,7 @@ int sendTrList(int sockfd, trPtr ptr)
         if (strstr(ptr->raw, errTXT) == ptr->raw) {
             ptr->err = ptr->raw;
             fprintf(stderr, "SRV %s\n", ptr->err);
+            return 0;
         } else {
             // Here, we search the first word in raw and save it as result
             char *rptr;
